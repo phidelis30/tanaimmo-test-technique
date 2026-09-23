@@ -8,5 +8,8 @@
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "express": "^5.2.1"
   }
 }
