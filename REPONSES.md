@@ -118,3 +118,39 @@ Tests : les deux demandés (429 puis succès, 500 trois fois puis abandon), plus
 `fetch` et `sleep` sont injectés : les tests ne font aucun appel réseau et n'attendent pas vraiment.
 
 Limite : `createLead` peut prendre environ 16 s si le CRM ne répond plus (3 timeouts de 5 s, plus les attentes), et jusqu'à 35 s s'il renvoie des 429 avec `Retry-After: 10`. Il ne faut donc pas l'appeler pendant la requête du formulaire de contact. Il faut d'abord enregistrer le contact en base, puis appeler le CRM depuis une tâche en arrière-plan. Je ne l'ai pas fait ici.
+
+## Partie 3 - Gestion d'incident
+
+### 3.1 Vendredi 21h40
+
+**21h40 - alerte et appel du client.** J'acquitte l'alerte et je préviens mon binôme. Au client, je réponds court : "Je vois le problème, c'est lié à l'afflux de la campagne, je suis dessus. Je vous rappelle à 22h00 au plus tard, même si ce n'est pas réglé." Je lui demande de suspendre les envois de SMS restants.
+
+**21h40-21h50 - premières vérifications.**
+- Dashboards : trafic par rapport à d'habitude, erreurs et latence par route, instances Node (CPU, mémoire, redémarrages).
+- Base : connexions utilisées par rapport au maximum du pool, CPU, requêtes en cours (`pg_stat_activity`).
+- Logs : le type d'erreur (attente de connexion, timeout, mémoire).
+- Déploiement récent ? Si oui, je fais d'abord un rollback.
+
+**Hypothèses.** La plus probable : le SMS envoie tout le monde sur une recherche par ville, et l'extrait B fait 1 + 2N requêtes, sans LIMIT. Le pool sature, les requêtes attendent une connexion (d'où les 9 s), puis tombent en timeout. On le voit si `pg_stat_activity` est plein de `SELECT url FROM photos ...`. Autres pistes : pas d'index sur `city` (CPU de la base à 100 %), ou des instances Node à court de mémoire à cause des réponses énormes.
+
+**21h50-22h00 - limiter les dégâts, même sans connaître la cause.**
+- Cache de `/api/listings` sur le CDN ou le proxy, pendant 30 à 60 s. Tout le monde cherche les mêmes villes : gros effet, et facile à retirer.
+- Hotfix d'une ligne (`LIMIT 20`), et index créés avec `CREATE INDEX CONCURRENTLY`, qui ne bloque pas les écritures.
+- Pas d'instances Node en plus si c'est la base qui sature : plus d'instances, c'est plus de connexions, donc pire.
+- En dernier recours, une limite de débit au proxy : des 503 rapides plutôt que tout laisser s'empiler. Le webhook de paiement et le formulaire de contact restent hors limite.
+
+**22h00 - point avec le client.** Je lui dis ce qui a été fait, le résultat mesuré ("35 % d'erreurs au début, 2 % maintenant") et l'heure du prochain point. Ensuite, un point toutes les 30 min jusqu'au retour à la normale. Je ne promets rien que je n'ai pas vérifié, et je note les heures et les actions pour le post-mortem.
+
+**Le lendemain.**
+- Je vérifie la nuit et je garde les mitigations.
+- Je déploie la vraie correction de B, avec les index, puis je fais un test de charge (k6) à 2 fois le pic de la veille avant la prochaine campagne.
+- Je rejoue ce qui a été perdu (formulaires de contact, webhooks en erreur).
+- J'envoie au client un post-mortem court : ce qui s'est passé, la durée, la cause, et ce qu'on change, avec une date.
+- Je lui demande de nous prévenir quelques jours avant chaque campagne.
+
+### 3.2 Alertes avant le lancement
+
+1. Taux de 5xx : au-dessus de 2 % sur 5 min, message à l'équipe ; au-dessus de 5 % sur 2 min, appel d'astreinte. Grafana + Prometheus.
+2. Latence p95 au-dessus de 1,5 s sur 5 min (le p95 se dégrade avant la médiane). Grafana.
+3. Base : connexions au-dessus de 80 % du pool, ou CPU au-dessus de 80 % pendant 5 min. postgres_exporter + Grafana.
+4. Sonde externe chaque minute (accueil, recherche, `/health`), alerte après 2 échecs de suite. Elle détecte aussi les pannes de DNS, de certificat ou d'hébergeur. UptimeRobot.

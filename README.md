@@ -2,7 +2,7 @@
 
 Mon rendu pour le test technique TARAM Group (Développeur Web React - maintenance et fiabilité).
 
-Les réponses écrites (partie 1, explications de la partie 2) sont dans [REPONSES.md](REPONSES.md).
+Les réponses écrites (partie 1, explications de la partie 2, partie 3) sont dans [REPONSES.md](REPONSES.md).
 
 ## Lancer les tests
 
@@ -36,6 +36,7 @@ Les tests n'ont besoin d'aucune variable d'environnement. Celles de l'applicatio
   - un token qui n'apparaît ni dans les logs ni dans les messages d'erreur.
 
   Il y a les 2 tests demandés, plus 4 autres.
+- **Partie 3** : dans REPONSES.md.
 
 ## Ce qui n'est pas fait
 
@@ -54,6 +55,8 @@ Les tests n'ont besoin d'aucune variable d'environnement. Celles de l'applicatio
 
 ## Temps passé
 
+Environ 1h17 au total :
 - Lecture du sujet et des extraits : 24 min
 - Partie 1 (revue des extraits, correction de A, B et C, tests) : 25 min
 - Partie 2 (connecteur CRM et tests) : 15 min
+- Partie 3 (gestion d'incident et alertes) : 13 min
