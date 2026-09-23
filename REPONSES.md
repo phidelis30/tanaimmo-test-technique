@@ -96,3 +96,25 @@ Corrigé dans `src/routes/paymentWebhook.js`.
 | On fait confiance au contenu du webhook : on ne vérifie ni que la réservation existe, ni le montant ; le statut est écrasé même si la réservation est annulée ; et le reçu part à l'email donné dans le payload. | Haute | Lire la réservation en base, vérifier le montant et la devise, passer à `paid` seulement depuis `pending`, et utiliser l'email enregistré en base. Si quelque chose ne correspond pas, on répond quand même 200 (réessayer n'y changerait rien), mais on log une erreur pour qu'un humain vérifie. |
 
 Tables utilisées par la correction (pas créées dans le dépôt) : `payment_events (event_id PRIMARY KEY, payload, created_at)` et `jobs (id, type, payload, status, attempts)`.
+
+## Partie 2 - Connecteur CRM
+
+Code dans `src/crm/crmClient.js`, tests dans `test/crmClient.test.js`.
+
+Comment je l'ai fait :
+- **Timeout** : 5 s par tentative, avec un `AbortController`.
+- **Quand réessayer** : sur 429, 500, 502 et 503 (j'ai ajouté 408 et 504, qui sont aussi temporaires), sur un timeout et sur une erreur réseau. Pas de réessai sur les autres 4xx : un 400 ou un 401 ne va pas se corriger tout seul. Pour le 401, le message d'erreur dit de vérifier le token.
+- **Nombre d'essais** : 3 tentatives maximum. Entre deux tentatives, on attend au plus 500 ms, puis au plus 1 s (backoff exponentiel). La durée exacte est tirée au hasard entre 50 et 100 % de ce maximum, pour éviter que tous les appels en échec réessaient en même temps.
+- **429** : j'attends la durée du `Retry-After`. S'il demande plus de 10 s, j'abandonne tout de suite plutôt que de bloquer : c'est à l'appelant de replanifier.
+- **Idempotence** : une clé `Idempotency-Key` est générée une seule fois par lead et renvoyée à chaque tentative. Le cas qui compte, c'est le timeout : le CRM a peut-être créé le lead sans qu'on reçoive la réponse. Avec la même clé, il doit renvoyer le lead existant au lieu d'en créer un deuxième. Ça suppose que le CRM gère cet en-tête (à confirmer avec leur doc). On peut aussi passer sa propre clé, par exemple l'id du formulaire enregistré en base, pour que ça marche même après un redémarrage du serveur.
+- **Token** : il est lu dans `CRM_API_TOKEN` et sert uniquement dans l'en-tête `Authorization`. Les erreurs et les logs ne contiennent que l'id de l'annonce, le status, le code, le numéro de tentative, le délai et la clé d'idempotence. Je ne mets pas non plus le body d'erreur du CRM dans les messages, car il peut contenir des données personnelles.
+
+Tests : les deux demandés (429 puis succès, 500 trois fois puis abandon), plus quatre autres :
+- un 400 n'est pas réessayé ;
+- un timeout ne crée pas de doublon ;
+- un `Retry-After` trop long fait abandonner ;
+- le token n'apparaît nulle part.
+
+`fetch` et `sleep` sont injectés : les tests ne font aucun appel réseau et n'attendent pas vraiment.
+
+Limite : `createLead` peut prendre environ 16 s si le CRM ne répond plus (3 timeouts de 5 s, plus les attentes), et jusqu'à 35 s s'il renvoie des 429 avec `Retry-After: 10`. Il ne faut donc pas l'appeler pendant la requête du formulaire de contact. Il faut d'abord enregistrer le contact en base, puis appeler le CRM depuis une tâche en arrière-plan. Je ne l'ai pas fait ici.
